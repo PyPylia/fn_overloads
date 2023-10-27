@@ -1,0 +1,26 @@
+error: future cannot be sent between threads safely
+  --> tests/compile_fail/async_send_bound.rs:6:1
+   |
+6  | / fn_overloads! {
+7  | |     fn wait_identity {
+8  | |         async (data: Rc<&'static str>) -> String {
+9  | |             sleep(Duration::from_millis(10)).await;
+...  |
+12 | |     }
+13 | | }
+   | |_^ future returned by `inner` is not `Send`
+   |
+   = help: within `impl Future<Output = String>`, the trait `Send` is not implemented for `Rc<&'static str>`
+   = note: use `std::sync::Arc` instead of `std::rc::Rc`
+note: future is not `Send` as this value is used across an await
+  --> tests/compile_fail/async_send_bound.rs:9:46
+   |
+8  |         async (data: Rc<&'static str>) -> String {
+   |                ---- has type `Rc<&'static str>` which is not `Send`
+9  |             sleep(Duration::from_millis(10)).await;
+   |                                              ^^^^^ await occurs here, with `data` maybe used later
+10 |             data.to_string()
+11 |         }
+   |         - `data` is later dropped here
+   = note: required for the cast from `Pin<Box<impl Future<Output = String>>>` to `Pin<Box<(dyn Future<Output = String> + Send + 'static)>>`
+   = note: this error originates in the macro `fn_overloads` (in Nightly builds, run with -Z macro-backtrace for more info)

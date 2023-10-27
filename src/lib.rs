@@ -1,5 +1,5 @@
 use proc_macro::TokenStream;
-use proc_macro2::{Literal, TokenStream as TokenStream2, Span};
+use proc_macro2::{Literal, Span, TokenStream as TokenStream2};
 use quote::{quote, TokenStreamExt};
 use syn::{
     braced, parenthesized,
@@ -7,11 +7,42 @@ use syn::{
     parse_macro_input,
     punctuated::Punctuated,
     token::{Brace, Paren},
-    Block, Generics, Ident, Result, ReturnType, Token, Type, Visibility,
+    Block, Generics, Ident, Result, ReturnType, Token, Type, Visibility, parse_quote,
 };
 
+mod kw {
+    syn::custom_keyword!(Send);
+}
+
 #[allow(dead_code)]
-//#[derive(Debug)]
+enum Asyncness {
+    Async {
+        async_token: Token![async],
+        not_sendness: Option<(Token![!], kw::Send)>,
+    },
+    Sync,
+}
+
+impl Parse for Asyncness {
+    fn parse(input: ParseStream) -> Result<Self> {
+        if let Some(async_token) = input.parse()? {
+            let not_sendness = if input.peek(Token![!]) && input.peek2(kw::Send) {
+                Some((input.parse()?, input.parse()?))
+            } else {
+                None
+            };
+
+            Ok(Self::Async {
+                async_token,
+                not_sendness,
+            })
+        } else {
+            Ok(Self::Sync)
+        }
+    }
+}
+
+#[allow(dead_code)]
 struct OverloadArg {
     name: Ident,
     colon: Token![:],
@@ -30,7 +61,7 @@ impl Parse for OverloadArg {
 
 #[allow(dead_code)]
 struct Overload {
-    asyncness: Option<Token![async]>,
+    asyncness: Asyncness,
     generics: Generics,
     paren: Paren,
     args: Punctuated<OverloadArg, Token![,]>,
@@ -63,6 +94,12 @@ impl Parse for Overload {
 
 impl Overload {
     fn to_tokens(&self, name: &Ident) -> TokenStream2 {
+        #[cfg(feature = "std")]
+        let core_path = quote! { ::std };
+
+        #[cfg(not(feature = "std"))]
+        let core_path = quote! { ::core };
+
         let generics = &self.generics;
         let block = &self.block;
         let true_output = match &self.ret {
@@ -76,7 +113,9 @@ impl Overload {
             .map(|pair| pair.value().ty.clone())
             .collect();
 
-        if !args_tuple.trailing_punct() {
+        if args_tuple.is_empty() {
+            args_tuple.push( parse_quote!{ () });
+        } else if !args_tuple.trailing_punct() {
             args_tuple.push_punct(Token![,](Span::call_site()));
         }
 
@@ -101,34 +140,48 @@ impl Overload {
 
         let output;
         let inner_call;
+        let inner_async;
 
-        if self.asyncness.is_some() {
+        if let Asyncness::Async {
+            async_token: _,
+            not_sendness,
+        } = self.asyncness
+        {
+            let sendness = if not_sendness.is_some() {
+                quote!()
+            } else {
+                quote! { + #core_path::marker::Send }
+            };
+
+            inner_async = quote! { async };
+
             #[cfg(not(feature = "impl_futures"))]
             {
                 #[cfg(feature = "std")]
                 let box_path = quote! { ::std::boxed::Box };
-        
+
                 #[cfg(not(feature = "std"))]
                 let box_path = quote! { ::alloc::boxed::Box };
 
                 output = quote! {
-                    ::core::pin::Pin<#box_path<dyn ::core::future::Future<Output = #true_output>>>
+                    #core_path::pin::Pin<#box_path<dyn #core_path::future::Future<Output = #true_output> #sendness>>
                 };
                 inner_call = quote! {
-                    #box_path::pin(async move { inner(#args_expansion) })
+                    #box_path::pin(inner(#args_expansion))
                 };
             }
 
             #[cfg(feature = "impl_futures")]
             {
                 output = quote! {
-                    impl ::core::future::Future<Output = #true_output>
+                    impl #core_path::future::Future<Output = #true_output> #sendness
                 };
                 inner_call = quote! {
-                    async move { inner(#args_expansion) }
+                    inner(#args_expansion)
                 };
             }
         } else {
+            inner_async = quote!();
             output = true_output.clone();
             inner_call = quote! {
                 inner(#args_expansion)
@@ -136,22 +189,22 @@ impl Overload {
         }
 
         quote! {
-            impl #generics ::core::ops::FnOnce<(#args_tuple)> for #name {
+            impl #generics #core_path::ops::FnOnce<(#args_tuple)> for #name {
                 type Output = #output;
 
                 extern "rust-call" fn call_once(self, args: (#args_tuple)) -> Self::Output {
-                    fn inner #generics (#inner_args) -> #true_output #block
+                    #inner_async fn inner #generics (#inner_args) -> #true_output #block
                     #inner_call
                 }
             }
 
-            impl #generics ::core::ops::FnMut<(#args_tuple)> for #name {
+            impl #generics #core_path::ops::FnMut<(#args_tuple)> for #name {
                 extern "rust-call" fn call_mut(&mut self, args: (#args_tuple)) -> Self::Output {
                     #name.call_once(args)
                 }
             }
 
-            impl #generics ::core::ops::Fn<(#args_tuple)> for #name {
+            impl #generics #core_path::ops::Fn<(#args_tuple)> for #name {
                 extern "rust-call" fn call(&self, args: (#args_tuple)) -> Self::Output {
                     #name.call_once(args)
                 }

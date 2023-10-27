@@ -39,27 +39,33 @@ fn_overloads! {
 
         // This doesn't
         <R: FromStr + Mul<u32>>(value: &str) -> Option<R> {
-            Some(value.parse()? * 2)
+            Some(value.parse::<R>().ok()? * 2)
         }
     }
 }
 ```
 
 ## Async
-This macro supports async, but requires either `alloc` or `std`. The `std` feature flag is turned on by default.
+This macro supports async, but by default requires either `alloc` or `std`. The `std` feature flag is turned on by default.
+By default, the macro will desugar an async function to `Pin<Box<dyn Future<Output = T> + Send>>`.
+To remove the `Send` trait bound, add `!Send` after the async.
 
-By default, the macro will desugar an async function to `Pin<Box<dyn Future<Output = T>>>`, but with the `impl_futures` flag turned on it will desugar it to `impl Future<Output = T>` which requires the `impl_trait_in_assoc_type` nightly feature.
+With the `impl_futures` flag turned on the macro will desugar an async function to `impl Future<Output = T> + Send` which requires the `impl_trait_in_assoc_type` nightly feature, but this removes the requirement for `std` or `alloc`.
 
 ```rust
 use tokio::sync::{mpsc, oneshot};
+use std::{rc::Rc, cell::RefCell};
 
 fn_overloads! {
     fn send_alert {
-        async (channel: &mpsc::Sender<&'static str>) {
+        async (channel: mpsc::Sender<&'static str>) {
             channel.send("Oh no!").await.ok();
         }
         async (channel: oneshot::Sender<&'static str>) {
             channel.send("Oh no!").ok();
+        }
+        async !Send (channel: Rc<RefCell<Vec<&'static str>>>) {
+            channel.borrow_mut().push("Oh no!");
         }
     }
 }

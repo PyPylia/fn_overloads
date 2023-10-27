@@ -1,0 +1,5 @@
+error[E0207]: the type parameter `R` is not constrained by the impl trait, self type, or predicates
+ --> tests/compile_fail/unconstrained_generic.rs:7:10
+  |
+7 |         <R: FromStr + Mul<u32>>(value: &str) -> Option<R> {
+  |          ^ unconstrained type parameter

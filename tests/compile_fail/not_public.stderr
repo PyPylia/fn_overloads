@@ -1,0 +1,12 @@
+error[E0603]: unit struct `not_public` is private
+  --> tests/compile_fail/not_public.rs:14:13
+   |
+14 |     hidden::not_public(1);
+   |             ^^^^^^^^^^ private unit struct
+   |
+note: the unit struct `not_public` is defined here
+  --> tests/compile_fail/not_public.rs:6:5
+   |
+6  |     fn_overloads! {
+   |     ^^^^^^^^^^^^^
+   = note: this error originates in the macro `fn_overloads` (in Nightly builds, run with -Z macro-backtrace for more info)
